@@ -16,7 +16,6 @@ dependencies = [
     "tqdm",
     "torch>=2.0",
     "lightning>=2.0",
-    "nvtx",
     "rs-distributions",
     "scipy",
     "matplotlib",
@@ -49,7 +48,6 @@ careless = "careless.careless:main"
 "careless.isigi" = "careless.stats.isigi:main"
 "careless.filter_image" = "careless.stats.filter_by_image_cc:main"
 "careless.plot_history" = "careless.stats.history:main"
-"careless.nsys_summary" = "careless.stats.nsys:main"
 "careless.bfactor" = "careless.stats.prior_b:main"
 "careless.apply_bfactor" = "careless.stats.rescale:main"
 "careless.completeness" = "careless.stats.completeness:main"
@@ -66,3 +64,4 @@ testpaths = [
 
 [tool.setuptools.dynamic]
 version = {file = "careless/VERSION"}
+
