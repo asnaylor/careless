@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import numpy as np
 import lightning as L
+import nvtx
 from careless.models.base import (
     BaseModel,
     reset_losses_and_metrics,
@@ -235,6 +236,7 @@ class VariationalMergingModel(L.LightningModule, BaseModel):
     # Custom training loop (mirrors original train_model API)
     # ------------------------------------------------------------------
 
+    @nvtx.annotate("train.run", domain="careless", category="training")
     def train_model(
         self,
         data,
@@ -274,83 +276,130 @@ class VariationalMergingModel(L.LightningModule, BaseModel):
         history = {}
 
         # Move data to model's device
-        device = next(self.parameters()).device
-        data = tuple(
-            torch.as_tensor(d, dtype=torch.float32).to(device)
-            if d.dtype in (torch.float64, np.float64)
-            else torch.as_tensor(d).to(device)
-            for d in data
-        )
-        if validation_data is not None:
-            val_scale = len(data[0]) / len(validation_data[0])
-            validation_data = tuple(
-                torch.as_tensor(d).to(device) for d in validation_data
+        with nvtx.annotate(
+            "train.data_to_device", domain="careless", category="transfer"
+        ):
+            device = next(self.parameters()).device
+            data = tuple(
+                torch.as_tensor(d, dtype=torch.float32).to(device)
+                if d.dtype in (torch.float64, np.float64)
+                else torch.as_tensor(d).to(device)
+                for d in data
             )
+            if validation_data is not None:
+                val_scale = len(data[0]) / len(validation_data[0])
+                validation_data = tuple(
+                    torch.as_tensor(d).to(device) for d in validation_data
+                )
 
         bar = trange(steps, desc=message, disable=not progress)
         for i in bar:
-            self.train()
-            optimizer.zero_grad()
-            reset_losses_and_metrics()
+            with nvtx.annotate(
+                "train.step",
+                domain="careless",
+                category="training",
+                payload=i,
+            ):
 
-            self(data)
+                self.train()
+                optimizer.zero_grad()
+                reset_losses_and_metrics()
 
-            losses = get_accumulated_losses()
-            metrics = get_accumulated_metrics()
-            loss = sum(losses)
-            metrics["Loss"] = loss.detach().item()
+                with nvtx.annotate(
+                    "train.forward", domain="careless", category="training"
+                ):
 
-            # Check for NaN/Inf
-            if not torch.isfinite(loss):
-                print("Encountered numerical issues, terminating optimization early!")
-                break
+                    self(data)
+                    losses = get_accumulated_losses()
+                    metrics = get_accumulated_metrics()
+                    loss = sum(losses)
 
-            loss.backward()
+                with nvtx.annotate(
+                    "train.loss_to_host",
+                    domain="careless",
+                    category="synchronization",
+                ):
+                
+                    metrics["Loss"] = loss.detach().item()
 
-            # Per-element NaN/Inf gradient filter (matches TF behaviour)
-            if self._filter_nan_gradients:
-                for p in self.parameters():
-                    if p.grad is not None:
-                        p.grad.nan_to_num_(nan=0.0, posinf=0.0, neginf=0.0)
 
-            # Gradient clipping
-            if self._global_clipnorm is not None:
-                torch.nn.utils.clip_grad_norm_(self.parameters(), self._global_clipnorm)
-            if self._clipnorm is not None:
-                for p in self.parameters():
-                    if p.grad is not None:
-                        torch.nn.utils.clip_grad_norm_([p], self._clipnorm)
-            if self._clipvalue is not None:
-                torch.nn.utils.clip_grad_value_(self.parameters(), self._clipvalue)
+                with nvtx.annotate(
+                    "train.finite_check",
+                    domain="careless",
+                    category="synchronization",
+                ):
+                    has_numerical_issues = not torch.isfinite(loss)
+                if has_numerical_issues:
+                    print("Encountered numerical issues, terminating optimization early!")
+                    break
 
-            # Compute grad norm for monitoring
-            grad_norm = torch.sqrt(
-                sum(p.grad.norm() ** 2 for p in self.parameters() if p.grad is not None)
-            )
+            # # Check for NaN/Inf
+            # if not torch.isfinite(loss):
+            #     print("Encountered numerical issues, terminating optimization early!")
+            #     break
 
-            optimizer.step()
+                with nvtx.annotate(
+                    "train.backward", domain="careless", category="backward"
+                ):
+                    loss.backward()
 
-            # Validation
-            if validation_data is not None:
-                if i % validation_frequency == 0:
-                    self.eval()
-                    with torch.no_grad():
-                        reset_losses_and_metrics()
-                        self(validation_data)
-                        val_metrics = get_accumulated_metrics()
-                    metrics["NLL_val"] = float(val_metrics.get("NLL", float('nan'))) * val_scale
-                else:
-                    metrics["NLL_val"] = float('nan')
+                with nvtx.annotate(
+                    "train.gradient_postprocess",
+                    domain="careless",
+                    category="backward",
+                ):
+                    # Per-element NaN/Inf gradient filter (matches TF behaviour)
+                    if self._filter_nan_gradients:
+                        for p in self.parameters():
+                            if p.grad is not None:
+                                p.grad.nan_to_num_(nan=0.0, posinf=0.0, neginf=0.0)
 
-            metrics["Grad Norm"] = float(grad_norm)
+                    # Gradient clipping
+                    if self._global_clipnorm is not None:
+                        torch.nn.utils.clip_grad_norm_(self.parameters(), self._global_clipnorm)
+                    if self._clipnorm is not None:
+                        for p in self.parameters():
+                            if p.grad is not None:
+                                torch.nn.utils.clip_grad_norm_([p], self._clipnorm)
+                    if self._clipvalue is not None:
+                        torch.nn.utils.clip_grad_value_(self.parameters(), self._clipvalue)
 
-            # Update history
-            postfix = {}
-            for k, v in metrics.items():
-                v = float(v)
-                postfix[k] = format_string.format(v)
-                history.setdefault(k, []).append(v)
-            bar.set_postfix(postfix)
+                    # Compute grad norm for monitoring
+                    grad_norm = torch.sqrt(
+                        sum(p.grad.norm() ** 2 for p in self.parameters() if p.grad is not None)
+                    )
+
+                with nvtx.annotate(
+                    "train.optimizer_step", domain="careless", category="optimizer"
+                ):
+                    optimizer.step()
+
+                # Validation
+                if validation_data is not None:
+                    if i % validation_frequency == 0:
+                        self.eval()
+                        with torch.no_grad():
+                            reset_losses_and_metrics()
+                            self(validation_data)
+                            val_metrics = get_accumulated_metrics()
+                        metrics["NLL_val"] = float(val_metrics.get("NLL", float('nan'))) * val_scale
+                    else:
+                        metrics["NLL_val"] = float('nan')
+
+                with nvtx.annotate(
+                    "train.metrics_to_host",
+                    domain="careless",
+                    category="synchronization",
+                ):
+                    metrics["Grad Norm"] = float(grad_norm)
+
+                    # Update history
+                    postfix = {}
+                    for k, v in metrics.items():
+                        v = float(v)
+                        postfix[k] = format_string.format(v)
+                        history.setdefault(k, []).append(v)
+                    bar.set_postfix(postfix)
 
         return history
 
