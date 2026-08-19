@@ -32,6 +32,10 @@ def run_careless(parser):
         from sys import exit
         exit()
 
+    # Avoid per-call GPU reductions and host synchronizations from distribution
+    # argument/support checks in the training loop.
+    torch.distributions.Distribution.set_default_validate_args(False)
+
     inputs, rac = df.format_files(parser.reflection_files)
     dm = DataManager(inputs, rac, parser=parser)
 
