@@ -36,6 +36,10 @@ def run_careless(parser):
     # argument/support checks in the training loop.
     torch.distributions.Distribution.set_default_validate_args(False)
 
+    # Allow float32 matrix multiplications to use TF32 tensor cores on supported
+    # NVIDIA GPUs while keeping model parameters and outputs in float32.
+    torch.set_float32_matmul_precision("high")
+
     inputs, rac = df.format_files(parser.reflection_files)
     dm = DataManager(inputs, rac, parser=parser)
 
