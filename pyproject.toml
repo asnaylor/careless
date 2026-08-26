@@ -16,7 +16,7 @@ dependencies = [
     "tqdm",
     "torch>=2.0",
     "lightning>=2.0",
-    "rs-distributions",
+    "rs-distributions>=0.0.4",
     "scipy",
     "matplotlib",
     "seaborn",
@@ -64,4 +64,3 @@ testpaths = [
 
 [tool.setuptools.dynamic]
 version = {file = "careless/VERSION"}
-

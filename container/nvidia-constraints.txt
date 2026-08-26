@@ -1,0 +1,4 @@
+# Keep NVIDIA's PyTorch build while making the smallest NumPy update required
+# by the Careless probability-distribution implementation.
+numpy==2.1.1
+rs-distributions==0.0.4
