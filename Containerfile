@@ -150,7 +150,7 @@ FROM dials-runtime AS careless
 
 LABEL org.opencontainers.image.title="careless"
 LABEL org.opencontainers.image.description="GPU-enabled careless crystallographic merging for NERSC Perlmutter"
-LABEL org.opencontainers.image.source="https://github.com/rs-station/careless"
+LABEL org.opencontainers.image.source="https://github.com/asnaylor/careless"
 LABEL org.opencontainers.image.licenses="MIT"
 
 COPY --from=dials-builder \
