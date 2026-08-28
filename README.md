@@ -49,6 +49,39 @@ For usage examples and data from the `careless` [preprint](https://doi.org/10.11
 
 Still confused? File an [issue](https://github.com/rs-station/careless/issues/new/choose)! Issues help us improve our code base and leave a public record for other users. 
 
+## Distributed DIALS preparation on Perlmutter
+
+The container includes `careless.prepare_dials`, which reads complete same-stem
+`.expt`/`.refl` pairs through persistent Ray actors and writes one logical,
+pre-`MonoFormatter` dataset as validated SafeTensors shards. It never filters
+reflections or writes an intermediate MTZ. Unmatched input files are reported
+but are not selected, and `--max-files` limits complete sorted pairs.
+
+From a Slurm allocation, prepare the dataset with the repository launcher:
+
+```bash
+export IMAGE=<careless-container>
+export CARELESS_DATA_ROOT=/path/visible/in/the/container
+scripts/run_prepare_dials_perlmutter \
+  --input-dir /path/visible/in/the/container/lcls \
+  --prepared-out /path/visible/in/the/container/prepared-careless \
+  --readers-per-node 4 \
+  --block-mib 256 \
+  --prepared-shards 8
+```
+
+The prepared directory is accepted by the ordinary monochromatic Careless CLI,
+so model settings can be changed without reading DIALS again:
+
+```bash
+careless mono dHKL,xobs,yobs,ewald_offset \
+  /path/visible/in/the/container/prepared-careless output/run
+```
+
+Careless reconstructs one complete `rs.DataSet` and invokes `MonoFormatter`
+once. The shards only parallelize storage reads; they do not batch the
+scientific computation.
+
 
 ## Core Model
 
@@ -112,4 +145,3 @@ During configuration some new metadata keys will be populated that are useful in
 <a name="wilson">1</a>: Wilson, A. J. C. “The Probability Distribution of X-Ray Intensities.” Acta Crystallographica 2, no. 5 (October 2, 1949): 318–21. https://doi.org/10.1107/S0365110X49000813.
 
 <a name="frenchwilson">2</a>: French, S., and K. Wilson. “On the Treatment of Negative Intensity Observations.” Acta Crystallographica Section A: Crystal Physics, Diffraction, Theoretical and General Crystallography 34, no. 4 (July 1, 1978): 517–25. https://doi.org/10.1107/S0567739478001114.
-

@@ -1,6 +1,7 @@
 import argparse
 import numpy as np 
 from os.path import exists
+from pathlib import Path
 
 class EnvironmentSettingsMixin(argparse.ArgumentParser):
     """
@@ -28,12 +29,16 @@ class CustomParser(EnvironmentSettingsMixin):
         for inFN in parser.reflection_files:
             if not exists(inFN):
                 self.error(f"Unmerged reflection file {inFN} does not exist")
+            elif Path(inFN).is_dir():
+                if (Path(inFN) / "manifest.json").is_file() and (Path(inFN) / "COMPLETE").is_file():
+                    continue
+                self.error(f"Prepared reflection dataset {inFN} is incomplete")
             elif inFN.endswith(".mtz") or inFN.endswith(".stream"):
                 continue
             self.error(
                 f"Could not determine filetype for reflection file, {inFN}." 
-                 "Please make sure your files end in '.mtz' or '.stream' as"
-                 " appropriate."
+                 "Expected an '.mtz' or '.stream' file, or a completed "
+                 "Careless prepared-dataset directory."
                 )
 
     def parse_args(self, *args, **kwargs):

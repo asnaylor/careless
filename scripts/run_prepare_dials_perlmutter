@@ -1,0 +1,106 @@
+#!/usr/bin/env bash
+# Launch distributed DIALS preparation from a Perlmutter Slurm allocation.
+
+set -euo pipefail
+
+die() {
+  echo "ERROR: $*" >&2
+  exit 2
+}
+
+[[ -n "${SLURM_JOB_ID:-}" ]] || die "run inside a Slurm allocation"
+[[ -n "${SLURM_JOB_NODELIST:-}" ]] || die "SLURM_JOB_NODELIST is not set"
+[[ -n "${IMAGE:-}" ]] || die "export IMAGE=<careless-container>"
+(( $# > 0 )) || die "pass careless.prepare_dials arguments"
+
+for command_name in podman-hpc scontrol srun tee timeout; do
+  command -v "${command_name}" >/dev/null 2>&1 \
+    || die "required command not found: ${command_name}"
+done
+
+mapfile -t nodes < <(scontrol show hostnames "${SLURM_JOB_NODELIST}")
+(( ${#nodes[@]} >= 1 )) || die "allocation contains no nodes"
+head_node="${nodes[0]}"
+[[ "${SLURM_JOB_ID}" =~ ^([0-9]+) ]] || die "invalid Slurm job id"
+port="$((24000 + BASH_REMATCH[1] % 16000))"
+address="${head_node}:${port}"
+cpus="${SLURM_CPUS_PER_TASK:-8}"
+[[ "${cpus}" =~ ^[1-9][0-9]*$ ]] || die "invalid CPU count: ${cpus}"
+
+workdir="$(pwd -P)"
+data_root="${CARELESS_DATA_ROOT:-${workdir}}"
+[[ -d "${data_root}" ]] || die "CARELESS_DATA_ROOT is not a directory: ${data_root}"
+data_root="$(cd "${data_root}" && pwd -P)"
+log="${CARELESS_PREPARE_LOG:-${SCRATCH:-/tmp}/careless-prepare-${SLURM_JOB_ID}.log}"
+timeout_seconds="${CARELESS_PREPARE_TIMEOUT_SECONDS:-21600}"
+[[ "${timeout_seconds}" =~ ^[1-9][0-9]*$ ]] || die "invalid timeout"
+
+srun_args=(
+  --nodes="${#nodes[@]}"
+  --ntasks="${#nodes[@]}"
+  --ntasks-per-node=1
+  --cpus-per-task="${cpus}"
+)
+podman_args=(
+  podman-hpc run
+  --rm
+  --net=host
+  --shm-size="${CARELESS_RAY_SHM_SIZE:-80GB}"
+  -v "${data_root}:${data_root}"
+  -w "${workdir}"
+  --env "RAY_ADDRESS=${address}"
+  --env RAY_SYMMETRIC_RUN_CLUSTER_WAIT_TIMEOUT=300
+  --env PYTHONUNBUFFERED=1
+  --env RAY_NUM_GPUS=0
+  --env RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO=0
+  --env "SLURM_JOB_NUM_NODES=${#nodes[@]}"
+  --env "SLURM_CPUS_PER_TASK=${cpus}"
+)
+if [[ "${data_root}" != "${workdir}" ]]; then
+  podman_args+=(-v "${workdir}:${workdir}")
+fi
+podman_args+=("${IMAGE}")
+container_command=(
+  "${podman_args[@]}"
+  bash -lc
+  'exec ray symmetric-run \
+    --address "$RAY_ADDRESS" \
+    --min-nodes "$SLURM_JOB_NUM_NODES" \
+    --num-cpus "$SLURM_CPUS_PER_TASK" \
+    --num-gpus 0 \
+    -- \
+    careless.prepare_dials "$@"'
+  careless-prepare
+  "$@"
+)
+
+mkdir -p "$(dirname "${log}")"
+printf 'IMAGE=%s\nARGS=' "${IMAGE}" | tee "${log}"
+printf '%q ' "$@" | tee -a "${log}"
+printf '\n' | tee -a "${log}"
+
+set +e
+timeout --signal=TERM --kill-after=30s "${timeout_seconds}s" \
+  srun "${srun_args[@]}" "${container_command[@]}" \
+  > >(tee -a "${log}") 2>&1 &
+runner_pid=$!
+result_seen=false
+while kill -0 "${runner_pid}" 2>/dev/null; do
+  if grep -Fq 'CARELESS_PREPARE_RESULT=' "${log}"; then
+    result_seen=true
+    break
+  fi
+  sleep 1
+done
+if [[ "${result_seen}" == true ]]; then
+  sleep 3
+  kill -TERM "${runner_pid}" 2>/dev/null || true
+fi
+wait "${runner_pid}"
+set -e
+
+grep -Fq 'CARELESS_PREPARE_RESULT={"' "${log}" \
+  || die "preparation did not emit a result"
+grep -Fq '"status": "pass"' "${log}" \
+  || die "preparation did not pass"
+echo "Careless DIALS preparation passed. Log: ${log}"

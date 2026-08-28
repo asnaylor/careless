@@ -6,6 +6,7 @@ ARG NVIDIA_PYTORCH_IMAGE=nvcr.io/nvidia/pytorch:26.01-py3
 FROM ${NVIDIA_PYTORCH_IMAGE} AS dials-runtime
 
 ARG CCTBX_VERSION=2025.11
+ARG RAY_VERSION=2.54.0
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -26,6 +27,8 @@ RUN python -m pip install --no-cache-dir \
       "pint==0.25.3" \
       "procrunner==2.3.3" \
       "pycbf==0.9.6.7" \
+      "ray==${RAY_VERSION}" \
+      "safetensors==0.7.0" \
       "scikit-image==0.26.0" \
       "scikit-learn==1.8.0" \
       "tabulate==0.9.0" \
@@ -169,11 +172,13 @@ COPY container/nvidia-constraints.txt /opt/nvidia-constraints.txt
 
 # The dev extra supplies pytest and its plugins so the same GPU tests used
 # during development can be run against the finished image.
-RUN python -m pip install --upgrade pip setuptools wheel && \
-    python -m pip install --constraint /opt/nvidia-constraints.txt ".[dev]" && \
+RUN python -m pip install --no-build-isolation \
+      --constraint /opt/nvidia-constraints.txt ".[dev,distributed]" && \
+    python -m pip check && \
     mkdir -p tests/data/output && \
     careless --version && \
-    CARELESS_CONTAINER_TESTS=1 python -m pytest -q -o addopts= tests/test_dials.py
+    CARELESS_CONTAINER_TESTS=1 python -c \
+      'from cctbx import sgtbx; from dials.array_family import flex; from dxtbx.model.experiment_list import ExperimentListFactory; import pytest; raise SystemExit(pytest.main(["-q", "-o", "addopts=", "tests/test_dials.py", "tests/io/test_prepared.py"]))'
 
 # Runtime data should be bind-mounted here. Do not set an ENTRYPOINT so all
 # careless.* console commands and normal debugging shells remain accessible.

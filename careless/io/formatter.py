@@ -176,10 +176,18 @@ class DataFormatter():
             A collection of reciprocal asus to aid in intepreting results.
         """
         def load(filename):
-            if filename.endswith('.mtz'):
+            from pathlib import Path
+
+            filename = str(filename)
+            if Path(filename).is_dir():
+                from .prepared import read_prepared_dataset
+
+                return read_prepared_dataset(filename)
+            elif filename.endswith('.mtz'):
                 return rs.read_mtz(filename)
             elif filename.endswith('.stream'):
                 return rs.read_crystfel(filename)
+            raise ValueError(f"Unsupported Careless reflection input: {filename}")
 
         return self((load(f) for f in files))
 
@@ -677,5 +685,4 @@ class LaueFormatter(DataFormatter):
                     "careless poly does not support .stream files. Use careless mono instead."
                 )
         return super().format_files(files)
-
 

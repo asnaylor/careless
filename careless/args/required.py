@@ -16,8 +16,9 @@ args_and_kwargs = (
     }),
 
     (("reflection_files", ), { 
-        "metavar":"reflections.{mtz,stream}", 
-        "help":"Mtz or stream file(s) containing unmerged reflection observations. "
+        "metavar":"reflections.{mtz,stream,prepared}",
+        "help":"MTZ or stream file(s), or a completed Careless prepared-dataset "
+               "directory, containing unmerged reflection observations. "
                "If you are supplying stream files, you must also use the --spacegroups option to supply the symmetry for merging. "
                "See the metadata_keys param for more info about stream file usage. "
                "careless poly does not currently support .stream files.",
@@ -31,4 +32,3 @@ args_and_kwargs = (
         "type":str,
     }),
 )
-
