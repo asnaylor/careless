@@ -176,14 +176,8 @@ class DataFormatter():
             A collection of reciprocal asus to aid in intepreting results.
         """
         def load(filename):
-            from pathlib import Path
-
             filename = str(filename)
-            if Path(filename).is_dir():
-                from .prepared import read_prepared_dataset
-
-                return read_prepared_dataset(filename)
-            elif filename.endswith('.mtz'):
+            if filename.endswith('.mtz'):
                 return rs.read_mtz(filename)
             elif filename.endswith('.stream'):
                 return rs.read_crystfel(filename)
@@ -195,6 +189,38 @@ class MonoFormatter(DataFormatter):
     """
     Formatter for careless inputs. 
     """
+    def format_files(self, files):
+        """Load a mono tensor cache, otherwise preserve the base file loaders."""
+        from pathlib import Path
+
+        files = tuple(files)
+        if len(files) != 1 or not Path(files[0]).is_dir():
+            return super().format_files(files)
+        from .prepared import DATASET_COLUMNS, read_prepared_dataset
+
+        generated = {
+            'dHKL', 'Hobs', 'Kobs', 'Lobs',
+            'image_id', 'file_id', 'asu_id',
+        }
+        columns = {
+            'H', 'K', 'L',
+            self.intensity_key or 'I',
+            self.uncertainty_key or 'SigI',
+            self.image_key or 'BATCH',
+        }
+        columns.update(k for k in self.metadata_keys if k not in generated)
+        if self.positional_encoding_keys is not None:
+            columns.update(
+                k for k in self.positional_encoding_keys if k not in generated
+            )
+        unavailable = columns - set(DATASET_COLUMNS)
+        if unavailable:
+            raise ValueError(
+                "Requested prepared columns are unavailable: "
+                + ",".join(sorted(unavailable))
+            )
+        return self((read_prepared_dataset(files[0], columns=columns),))
+
     def __init__(
             self, 
             intensity_key,
@@ -685,4 +711,3 @@ class LaueFormatter(DataFormatter):
                     "careless poly does not support .stream files. Use careless mono instead."
                 )
         return super().format_files(files)
-

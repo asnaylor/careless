@@ -10,12 +10,30 @@ def main():
 
 
 def run_careless(parser):
+    dials_dataset = None
+    if getattr(parser, 'input_kind', 'files') == 'dials':
+        # Keep this before the scientific Python stack: DIALS loads native
+        # cctbx extensions with import-order constraints.
+        from careless.io.dials_ray import read_dials_dataset
+        dials_dataset = read_dials_dataset(
+            parser.reflection_files[0],
+            expt_glob=parser.dials_expt_glob,
+            max_files=parser.dials_max_files,
+            workers_per_node=parser.ray_workers_per_node,
+            block_mib=parser.ray_block_mib,
+            save_tensors=parser.save_tensors,
+            tensor_shards=parser.tensor_shards,
+        )
+
     import numpy as np
     import torch
     import reciprocalspaceship as rs
     from careless.io.manager import DataManager
     from careless.io.formatter import MonoFormatter, LaueFormatter
     from careless.models.base import BaseModel
+
+    np.random.seed(parser.seed)
+    torch.manual_seed(parser.seed)
 
     if parser.type == 'poly':
         df = LaueFormatter.from_parser(parser)
@@ -40,7 +58,10 @@ def run_careless(parser):
     # NVIDIA GPUs while keeping model parameters and outputs in float32.
     torch.set_float32_matmul_precision("high")
 
-    inputs, rac = df.format_files(parser.reflection_files)
+    if dials_dataset is None:
+        inputs, rac = df.format_files(parser.reflection_files)
+    else:
+        inputs, rac = df((dials_dataset,))
     dm = DataManager(inputs, rac, parser=parser)
 
     if parser.test_fraction is not None:

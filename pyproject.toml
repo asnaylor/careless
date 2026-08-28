@@ -59,7 +59,6 @@ careless = "careless.careless:main"
 "careless.xds2mtz" = "careless.io.xds:main"
 "careless.split_friedel" = "careless.utils.friedel:split_friedel"
 "careless.combine_friedel" = "careless.utils.friedel:combine_friedel"
-"careless.prepare_dials" = "careless.io.dials_ray:main"
 
 [tool.pytest.ini_options]
 addopts = "-n auto --cov=careless --cov-config=.coveragerc --cov-report xml"

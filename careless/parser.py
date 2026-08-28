@@ -1,21 +1,15 @@
 import argparse
-import numpy as np 
 from os.path import exists
 from pathlib import Path
 
 class EnvironmentSettingsMixin(argparse.ArgumentParser):
     """
-    Sets random seeds and device configuration when parse_args is called.
-    (TensorFlow-specific flags are accepted but treated as no-ops for compatibility.)
+    Defers scientific-library initialization until the input kind is known.
     """
     def parse_args(self, *args, **kwargs):
-        parser = super().parse_args(*args, **kwargs)
-
-        import torch
-        np.random.seed(parser.seed)
-        torch.manual_seed(parser.seed)
-
-        return parser
+        # NumPy and Torch are deliberately imported later by run_careless.
+        # Raw DIALS input must load the cctbx native extensions first.
+        return super().parse_args(*args, **kwargs)
 
 class CustomParser(EnvironmentSettingsMixin):
     """
@@ -26,13 +20,36 @@ class CustomParser(EnvironmentSettingsMixin):
     def _validate_input_files(self, parser):
         if parser.type == 'devices':
             return
+        parser.input_kind = 'files'
+        directories = [Path(name) for name in parser.reflection_files if Path(name).is_dir()]
+        if directories:
+            if len(parser.reflection_files) != 1:
+                self.error(
+                    "A prepared dataset or raw DIALS directory must be the only "
+                    "reflection input"
+                )
+            directory = directories[0]
+            manifest = (directory / "manifest.json").is_file()
+            complete = (directory / "COMPLETE").is_file()
+            if manifest or complete:
+                if not (manifest and complete):
+                    self.error(f"Prepared reflection dataset {directory} is incomplete")
+                if parser.type != 'mono':
+                    self.error("Careless tensor caches are supported by mono only")
+                parser.input_kind = 'prepared'
+            elif parser.type == 'mono' and any(directory.glob(parser.dials_expt_glob)):
+                parser.input_kind = 'dials'
+            else:
+                pattern = getattr(parser, 'dials_expt_glob', '**/*.expt')
+                self.error(
+                    f"Reflection directory {directory} is neither a completed Careless "
+                    f"tensor cache nor a raw DIALS directory matching {pattern!r}"
+                )
         for inFN in parser.reflection_files:
             if not exists(inFN):
                 self.error(f"Unmerged reflection file {inFN} does not exist")
             elif Path(inFN).is_dir():
-                if (Path(inFN) / "manifest.json").is_file() and (Path(inFN) / "COMPLETE").is_file():
-                    continue
-                self.error(f"Prepared reflection dataset {inFN} is incomplete")
+                continue
             elif inFN.endswith(".mtz") or inFN.endswith(".stream"):
                 continue
             self.error(
@@ -40,6 +57,14 @@ class CustomParser(EnvironmentSettingsMixin):
                  "Expected an '.mtz' or '.stream' file, or a completed "
                  "Careless prepared-dataset directory."
                 )
+        if getattr(parser, 'save_tensors', None) is not None and parser.input_kind != 'dials':
+            self.error("--save-tensors is only valid with a raw DIALS input directory")
+        if getattr(parser, 'tensor_shards', None) is not None and parser.save_tensors is None:
+            self.error("--tensor-shards requires --save-tensors")
+        for name in ('dials_max_files', 'ray_workers_per_node', 'ray_block_mib', 'tensor_shards'):
+            value = getattr(parser, name, None)
+            if value is not None and value < 1:
+                self.error(f"--{name.replace('_', '-')} must be positive")
 
     def parse_args(self, *args, **kwargs):
         parser = super().parse_args(*args, **kwargs)
@@ -72,7 +97,7 @@ mono_sub = subs.add_parser("mono", help="Process monochromatic diffraction data.
 poly_sub = subs.add_parser("poly", help="Process polychromatic, 'Laue', diffraction data.", formatter_class=CustomFormatter)
 devices_sub = subs.add_parser("devices", help="Print available physical devices", formatter_class=CustomFormatter)
 
-from careless.args import required,poly,groups
+from careless.args import required,poly,groups,dials
 
 for args,kwargs in required.args_and_kwargs:
     mono_sub.add_argument(*args, **kwargs)
@@ -80,6 +105,10 @@ for args,kwargs in required.args_and_kwargs:
 
 for args,kwargs in poly.args_and_kwargs:
     poly_sub.add_argument(*args, **kwargs)
+
+dials_group = mono_sub.add_argument_group(dials.name, dials.description)
+for args,kwargs in dials.args_and_kwargs:
+    dials_group.add_argument(*args, **kwargs)
 
 for group in groups:
     if group.name is not None and group.description is not None:

@@ -16,9 +16,10 @@ args_and_kwargs = (
     }),
 
     (("reflection_files", ), { 
-        "metavar":"reflections.{mtz,stream,prepared}",
-        "help":"MTZ or stream file(s), or a completed Careless prepared-dataset "
-               "directory, containing unmerged reflection observations. "
+        "metavar":"reflections.{mtz,stream,prepared}|dials_directory",
+        "help":"MTZ or stream file(s), a completed Careless tensor-cache "
+               "directory, or (for mono only) one directory containing paired "
+               "DIALS .expt/.refl files. "
                "If you are supplying stream files, you must also use the --spacegroups option to supply the symmetry for merging. "
                "See the metadata_keys param for more info about stream file usage. "
                "careless poly does not currently support .stream files.",

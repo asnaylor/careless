@@ -49,38 +49,39 @@ For usage examples and data from the `careless` [preprint](https://doi.org/10.11
 
 Still confused? File an [issue](https://github.com/rs-station/careless/issues/new/choose)! Issues help us improve our code base and leave a public record for other users. 
 
-## Distributed DIALS preparation on Perlmutter
+## Direct DIALS input with Ray
 
-The container includes `careless.prepare_dials`, which reads complete same-stem
-`.expt`/`.refl` pairs through persistent Ray actors and writes one logical,
-pre-`MonoFormatter` dataset as validated SafeTensors shards. It never filters
-reflections or writes an intermediate MTZ. Unmatched input files are reported
-but are not selected, and `--max-files` limits complete sorted pairs.
-
-From a Slurm allocation, prepare the dataset with the repository launcher:
+Monochromatic Careless can read a directory of complete, same-stem
+`.expt`/`.refl` pairs directly. Ray distributes conversion across the available
+nodes, then Careless continues with its ordinary in-memory formatter, model,
+training, and output path. No intermediate MTZ or per-input cache file is made.
+The directory is one logical monochromatic input and cannot be combined with
+additional MTZ, stream, cache, or DIALS inputs in the same invocation.
 
 ```bash
-export IMAGE=<careless-container>
-scripts/run_prepare_dials_perlmutter \
-  --input-dir /path/to/lcls \
-  --expt-glob '*_reintegrated_*.expt' \
-  --max-files 5000 \
-  --prepared-out /path/to/prepared-careless \
-  --readers-per-node 4 \
-  --block-mib 256 \
-  --max-in-flight 2 \
-  --prepared-shards 8
+careless mono \
+  --dials-expt-glob '**/*_reintegrated_*.expt' \
+  --dials-max-files 5000 \
+  --ray-workers-per-node 4 \
+  --ray-block-mib 256 \
+  --save-tensors /path/to/prepared-careless \
+  --tensor-shards 16 \
+  dHKL,cartesian_fixed_x,cartesian_fixed_y,cartesian_fixed_z,ewald_offset \
+  /path/to/lcls output/run
 ```
 
-The launcher resolves and validates the input and output paths before starting
-Ray. It mounts the input directory read-only and the output parent read-write
-in every container, so no common data-root setting is required. If both are the
-same directory, one read-write mount is used. The output directory must not
-already exist. A run is only reported as successful after the completed
-manifest, marker, and SafeTensors shards are visible on the host.
+`--dials-max-files` is intended for smoke tests. Omit it to process every
+complete pair matching `--dials-expt-glob` in sorted path order. Careless fails
+before conversion if a matching `.expt` or `.refl` lacks its same-stem partner.
 
-The prepared directory is accepted by the ordinary monochromatic Careless CLI,
-so model settings can be changed without reading DIALS again:
+Without `--save-tensors`, all converted data remains in memory and no cache is
+written. With it, Careless atomically writes the full 22-column cctbx-exporter
+schema as a bounded number of SafeTensors shards. The default shard count is
+the Ray reader-actor count, not the number of `.expt`/`.refl` pairs. The cache
+path must not already exist.
+
+The cache is accepted by the ordinary monochromatic CLI, so future runs can
+change model settings without loading DIALS or starting Ray:
 
 ```bash
 careless mono dHKL,xobs,yobs,ewald_offset \
@@ -88,8 +89,17 @@ careless mono dHKL,xobs,yobs,ewald_offset \
 ```
 
 Careless reconstructs one complete `rs.DataSet` and invokes `MonoFormatter`
-once. The shards only parallelize storage reads; they do not batch the
-scientific computation.
+once. Shard boundaries do not create separate files, ASUs, or image groups.
+Only columns requested by the merge are loaded from the cache.
+
+Ray distributes only DIALS discovery and conversion. Model construction,
+training, and normal Careless outputs (including MTZ files) run through the
+existing Careless path on the process that invoked the command.
+
+If `RAY_ADDRESS` is unset, Careless starts a local Ray runtime. See the
+[Perlmutter Ray guide](doc/perlmutter-ray.md) for a tested multi-node Slurm and
+Podman-HPC setup, mounted-source development without `pip install`, cache
+verification, and cache reuse.
 
 
 ## Core Model
