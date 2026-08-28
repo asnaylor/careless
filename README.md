@@ -61,21 +61,30 @@ From a Slurm allocation, prepare the dataset with the repository launcher:
 
 ```bash
 export IMAGE=<careless-container>
-export CARELESS_DATA_ROOT=/path/visible/in/the/container
 scripts/run_prepare_dials_perlmutter \
-  --input-dir /path/visible/in/the/container/lcls \
-  --prepared-out /path/visible/in/the/container/prepared-careless \
+  --input-dir /path/to/lcls \
+  --expt-glob '*_reintegrated_*.expt' \
+  --max-files 5000 \
+  --prepared-out /path/to/prepared-careless \
   --readers-per-node 4 \
   --block-mib 256 \
+  --max-in-flight 2 \
   --prepared-shards 8
 ```
+
+The launcher resolves and validates the input and output paths before starting
+Ray. It mounts the input directory read-only and the output parent read-write
+in every container, so no common data-root setting is required. If both are the
+same directory, one read-write mount is used. The output directory must not
+already exist. A run is only reported as successful after the completed
+manifest, marker, and SafeTensors shards are visible on the host.
 
 The prepared directory is accepted by the ordinary monochromatic Careless CLI,
 so model settings can be changed without reading DIALS again:
 
 ```bash
 careless mono dHKL,xobs,yobs,ewald_offset \
-  /path/visible/in/the/container/prepared-careless output/run
+  /path/to/prepared-careless output/run
 ```
 
 Careless reconstructs one complete `rs.DataSet` and invokes `MonoFormatter`
